@@ -1,45 +1,82 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, Activity, CheckCircle, Search,
   RefreshCw, LayoutDashboard, UserPlus,
 } from 'lucide-react';
 import VisitorCard from '../components/VisitorCard';
-import { mockVisitors, formatDate } from '../mockData';
+import { formatDate } from '../mockData';
+import API_BASE from '../api';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [visitors, setVisitors] = useState([]);
   const [filter, setFilter]     = useState('all');
   const [search, setSearch]     = useState('');
+  const [loading, setLoading]   = useState(true);
+  const [error, setError]       = useState(null);
+  const pollIntervalRef = useRef(null);
 
-  const loadVisitors = useCallback(() => {
-    const stored   = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-    // Merge: stored records take precedence; append mock records not already in storage
-    const merged   = [
-      ...stored,
-      ...mockVisitors.filter((m) => !stored.find((s) => s.id === m.id)),
-    ];
-    setVisitors(merged);
+  const loadVisitors = useCallback(async () => {
+    try {
+      setError(null);
+      const response = await fetch(`${API_BASE}/api/visitors`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch visitors: ${response.statusText}`);
+      }
+      const data = await response.json();
+      setVisitors(data || []);
+    } catch (err) {
+      console.error('Error loading visitors:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => { loadVisitors(); }, [loadVisitors]);
+  // Load visitors on mount and set up auto-refresh
+  useEffect(() => {
+    loadVisitors();
+    
+    // Set up polling to refresh data every 5 seconds
+    pollIntervalRef.current = setInterval(() => {
+      loadVisitors();
+    }, 5000);
 
-  const handleCheckout = (id) => {
-    const stored   = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-    const exitTime = new Date().toISOString();
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, [loadVisitors]);
 
-    // Update localStorage if the record lives there
-    if (stored.find((v) => v.id === id)) {
-      const updated = stored.map((v) =>
-        v.id === id ? { ...v, status: 'exited', exitTime } : v
+  const handleCheckout = async (id) => {
+    try {
+      const exitTime = new Date().toISOString();
+      
+      const response = await fetch(`${API_BASE}/api/visitors/${id}/checkout`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ exitTime }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to checkout visitor: ${response.statusText}`);
+      }
+
+      // Update local state immediately, then refresh from server
+      setVisitors((prev) =>
+        prev.map((v) => v.id === id ? { ...v, status: 'exited', exitTime } : v)
       );
-      localStorage.setItem('guardplus_visitors', JSON.stringify(updated));
-    }
 
-    setVisitors((prev) =>
-      prev.map((v) => v.id === id ? { ...v, status: 'exited', exitTime } : v)
-    );
+      // Refresh data from server to ensure consistency
+      await loadVisitors();
+    } catch (err) {
+      console.error('Error checking out visitor:', err);
+      alert('Failed to checkout visitor. Please try again.');
+    }
   };
 
   const filtered = visitors.filter((v) => {
@@ -59,6 +96,47 @@ const Dashboard = () => {
   const todayCount   = visitors.filter((v) => {
     return new Date(v.entryTime).toDateString() === new Date().toDateString();
   }).length;
+
+  const handleRefreshClick = async () => {
+    // Reset interval and load immediately
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+    setLoading(true);
+    await loadVisitors();
+    // Restart polling
+    pollIntervalRef.current = setInterval(() => {
+      loadVisitors();
+    }, 5000);
+  };
+
+  if (error) {
+    return (
+      <div className="page-wrapper">
+        <div
+          style={{
+            display: 'flex', justifyContent: 'space-between',
+            alignItems: 'flex-start', marginBottom: '1.5rem',
+            flexWrap: 'wrap', gap: '0.75rem',
+          }}
+        >
+          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <LayoutDashboard size={24} color="#16a34a" /> Security Dashboard
+          </h1>
+        </div>
+        <div className="empty-state" style={{ marginTop: '2rem' }}>
+          <div className="empty-state-icon">
+            <Users size={28} />
+          </div>
+          <p className="empty-state-title">Error Loading Dashboard</p>
+          <p style={{ fontSize: '0.875rem', color: '#dc2626' }}>{error}</p>
+          <button className="btn btn-primary btn-sm" onClick={handleRefreshClick} style={{ marginTop: '1rem' }}>
+            <RefreshCw size={14} /> Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page-wrapper">
@@ -82,8 +160,8 @@ const Dashboard = () => {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button className="btn btn-secondary btn-sm" onClick={loadVisitors}>
-            <RefreshCw size={14} /> Refresh
+          <button className="btn btn-secondary btn-sm" onClick={handleRefreshClick} disabled={loading}>
+            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} /> Refresh
           </button>
           <button className="btn btn-primary btn-sm" onClick={() => navigate('/register')}>
             <UserPlus size={14} /> New Visitor

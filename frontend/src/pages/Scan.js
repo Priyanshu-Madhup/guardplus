@@ -1,69 +1,66 @@
 import React, { useState, useRef } from 'react';
 import {
-  QrCode, CheckCircle, User, ScanLine,
-  AlertCircle, Loader,
+  CheckCircle, User, LogOut,
+  AlertCircle, Loader, Search,
 } from 'lucide-react';
-import QRScanner from '../components/QRScanner';
 import { formatTime } from '../mockData';
 import API_BASE from '../api';
 
 const Scan = () => {
-  const [scanning, setScanning]           = useState(false);
+  const [visitorId, setVisitorId]         = useState('');
   const [scannedVisitor, setScannedVisitor] = useState(null);
   const [checkedOut, setCheckedOut]         = useState(false);
   const [scanError, setScanError]           = useState('');
-  const [cameraError, setCameraError]       = useState('');
   const [lookupLoading, setLookupLoading]   = useState(false);
   const processingRef = useRef(false);
 
   /* ── Lookup visitor by ID ── */
-  const handleScan = async (raw) => {
+  const handleLookupVisitor = async (e) => {
+    e.preventDefault();
     if (processingRef.current) return;
     processingRef.current = true;
     setScanError('');
     setLookupLoading(true);
 
-    if (!raw?.trim()) {
-      setScanError('Empty QR code. Please try again.');
+    const idToLookup = visitorId.trim();
+    if (!idToLookup) {
+      setScanError('Please enter a visitor ID.');
       setLookupLoading(false);
       processingRef.current = false;
       return;
     }
 
-    // Support both plain-ID and JSON payloads
-    let visitorId = raw.trim();
-    try { const p = JSON.parse(raw); if (p.id) visitorId = p.id; } catch { /* plain */ }
-
     // 1. Backend
     try {
-      const res = await fetch(`${API_BASE}/api/visitors/${visitorId}`);
+      const res = await fetch(`${API_BASE}/api/visitors/${idToLookup}`);
       if (res.ok) {
         const visitor = await res.json();
         setLookupLoading(false);
         if (visitor.status === 'active') {
           setScannedVisitor(visitor);
-          await performCheckout(visitor, visitorId);
+          await performCheckout(visitor, idToLookup);
         } else {
           setScannedVisitor(visitor);
           setCheckedOut(false);
         }
+        processingRef.current = false;
         return;
       }
     } catch { /* unreachable */ }
 
     // 2. localStorage fallback
     const stored = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-    const found  = stored.find((v) => v.id === visitorId);
+    const found  = stored.find((v) => v.id === idToLookup);
     if (found) {
       if (found.status === 'active') {
         setScannedVisitor(found);
-        await performCheckout(found, visitorId);
+        await performCheckout(found, idToLookup);
       } else {
         setScannedVisitor(found);
         setCheckedOut(false);
       }
     } else {
-      setScanError('Visitor not found. This QR code is not registered.');
+      setScanError('Visitor not found. Please check the ID and try again.');
       processingRef.current = false;
     }
     setLookupLoading(false);
@@ -97,10 +94,10 @@ const Scan = () => {
   };
 
   const reset = () => {
+    setVisitorId('');
     setScannedVisitor(null);
     setCheckedOut(false);
     setScanError('');
-    setCameraError('');
     setLookupLoading(false);
     processingRef.current = false;
   };
@@ -120,31 +117,31 @@ const Scan = () => {
         {/* Header */}
         <div className="page-header">
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <ScanLine size={24} color="#16a34a" /> QR Scanner
+            <LogOut size={24} color="#16a34a" /> Check Out Visitor
           </h1>
-          <p className="page-desc">Scan a visitor's QR code at the exit gate to check them out</p>
+          <p className="page-desc">Enter a visitor's ID to check them out at the exit gate</p>
         </div>
 
         {/* ══════════════════════════════════════════
-            IDLE — show start button
+            IDLE — show input form
         ══════════════════════════════════════════ */}
-        {!scanning && !lookupLoading && !scannedVisitor && (
+        {!lookupLoading && !scannedVisitor && (
           <div className="card">
-            <div className="card-body" style={{ textAlign: 'center', padding: '3rem 1.5rem' }}>
+            <div className="card-body" style={{ padding: '2rem 1.5rem' }}>
               <div style={{
                 width: 84, height: 84, borderRadius: '50%',
                 background: '#dcfce7', color: '#16a34a',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 margin: '0 auto 1.25rem',
               }}>
-                <QrCode size={42} />
+                <Search size={42} />
               </div>
 
-              <h2 style={{ fontWeight: 700, fontSize: '1.15rem', marginBottom: '0.4rem' }}>
-                Ready to Scan
+              <h2 style={{ fontWeight: 700, fontSize: '1.15rem', marginBottom: '0.4rem', textAlign: 'center' }}>
+                Enter Visitor ID
               </h2>
-              <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1.75rem' }}>
-                Press the button below — your camera will open automatically
+              <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1.75rem', textAlign: 'center' }}>
+                Enter the visitor's ID to retrieve their details
               </p>
 
               {scanError && (
@@ -153,20 +150,40 @@ const Scan = () => {
                 </div>
               )}
 
-              <button
-                className="btn btn-primary btn-lg"
-                onClick={() => { setScanError(''); setCameraError(''); setScanning(true); }}
-              >
-                <QrCode size={20} /> Open Scanner
-              </button>
+              <form onSubmit={handleLookupVisitor} style={{ display: 'flex', gap: '0.75rem' }}>
+                <input
+                  type="text"
+                  placeholder="Enter visitor ID"
+                  value={visitorId}
+                  onChange={(e) => setVisitorId(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    borderRadius: 8,
+                    border: '1px solid #e5e7eb',
+                    fontSize: '1rem',
+                    fontWeight: 500,
+                    outline: 'none',
+                  }}
+                  onFocus={(e) => e.target.style.borderColor = '#16a34a'}
+                  onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                />
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  <Search size={18} /> Search
+                </button>
+              </form>
             </div>
           </div>
         )}
 
         {/* ══════════════════════════════════════════
-            LOADING (after scan, before lookup done)
+            LOADING (after lookup started)
         ══════════════════════════════════════════ */}
-        {!scanning && lookupLoading && (
+        {lookupLoading && (
           <div className="card">
             <div className="card-body" style={{ textAlign: 'center', padding: '3rem 1.5rem' }}>
               <Loader
@@ -180,10 +197,9 @@ const Scan = () => {
         )}
 
         {/* ══════════════════════════════════════════
-            RESULT CARD (shown after successful scan
-            when scanner is already closed)
+            RESULT CARD (shown after lookup complete)
         ══════════════════════════════════════════ */}
-        {!scanning && scannedVisitor && (
+        {scannedVisitor && (
           <div className="card" style={{ animation: 'slideUp 0.3s ease-out' }}>
             <div className="card-body" style={{ padding: '1.5rem' }}>
 
@@ -235,164 +251,7 @@ const Scan = () => {
               </div>
 
               <button className="btn btn-primary btn-block" onClick={reset}>
-                <QrCode size={16} /> Scan Next Visitor
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════════
-            ACTIVE SCANNER VIEW
-        ══════════════════════════════════════════ */}
-        {scanning && (
-          <div className="card" style={{ overflow: 'hidden' }}>
-
-            {/* Card header */}
-            <div className="card-header">
-              <div className="card-header-icon"><QrCode size={20} /></div>
-              <div>
-                <p className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  QR Scanner
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
-                    background: '#dcfce7', color: '#16a34a',
-                    fontSize: '0.68rem', fontWeight: 700,
-                    padding: '0.15rem 0.5rem', borderRadius: 20,
-                  }}>
-                    <span style={{
-                      width: 6, height: 6, borderRadius: '50%',
-                      background: '#16a34a',
-                      animation: 'pulse 1.5s ease-in-out infinite',
-                    }} />
-                    ACTIVE
-                  </span>
-                </p>
-                <p className="card-subtitle">
-                  {lookupLoading ? 'Processing scan…' : window.isSecureContext ? 'Point camera at QR code' : 'Tap the button below to capture QR'}
-                </p>
-              </div>
-            </div>
-
-            {/* Scanner area */}
-            <div className="card-body" style={{ padding: 0, position: 'relative' }}>
-              <QRScanner
-                onScanSuccess={handleScan}
-                paused={!!scannedVisitor || lookupLoading}
-                onError={(msg) => setCameraError(msg)}
-              />
-
-              {/* Camera error */}
-              {cameraError && !lookupLoading && !scannedVisitor && (
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'rgba(0,0,0,0.78)',
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  padding: '1.5rem', zIndex: 10,
-                }}>
-                  <AlertCircle size={36} color="#fbbf24" style={{ marginBottom: '0.75rem' }} />
-                  <p style={{ color: '#fff', fontWeight: 600, textAlign: 'center', fontSize: '0.95rem', marginBottom: '0.4rem' }}>
-                    Camera access failed
-                  </p>
-                  <p style={{ color: '#d1d5db', fontSize: '0.8rem', textAlign: 'center', lineHeight: 1.5 }}>
-                    {cameraError}
-                  </p>
-                </div>
-              )}
-
-              {/* Loading overlay */}
-              {lookupLoading && !scannedVisitor && (
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'rgba(0,0,0,0.6)',
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center', zIndex: 10,
-                }}>
-                  <Loader size={36} color="#fff" style={{ animation: 'spin 1s linear infinite', marginBottom: '0.75rem' }} />
-                  <p style={{ color: '#fff', fontWeight: 600 }}>Looking up visitor…</p>
-                </div>
-              )}
-
-              {/* Scan error overlay */}
-              {scanError && !lookupLoading && (
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'rgba(0,0,0,0.65)',
-                  display: 'flex', flexDirection: 'column',
-                  alignItems: 'center', justifyContent: 'center',
-                  padding: '1.5rem', zIndex: 10,
-                }}>
-                  <AlertCircle size={36} color="#f87171" style={{ marginBottom: '0.75rem' }} />
-                  <p style={{ color: '#fff', fontWeight: 600, textAlign: 'center', marginBottom: '1rem' }}>{scanError}</p>
-                  <button className="btn btn-secondary" onClick={reset}>Try Again</button>
-                </div>
-              )}
-
-              {/* Result overlay */}
-              {scannedVisitor && (
-                <div style={{
-                  position: 'absolute', inset: 0,
-                  background: 'rgba(0,0,0,0.72)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  padding: '1.25rem', zIndex: 10,
-                }}>
-                  <div style={{
-                    background: '#fff', borderRadius: 16, padding: '1.25rem',
-                    width: '100%', maxWidth: 340,
-                    animation: 'slideUp 0.3s ease-out',
-                  }}>
-                    {/* Status */}
-                    <div style={{
-                      background: statusBg(), color: statusColor(),
-                      padding: '0.5rem 0.75rem', borderRadius: 8,
-                      display: 'flex', alignItems: 'center', gap: '0.5rem',
-                      fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.85rem',
-                    }}>
-                      <CheckCircle size={16} /> {statusLabel()}
-                    </div>
-
-                    {/* Visitor */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                      <div style={{
-                        width: 44, height: 44, borderRadius: '50%', overflow: 'hidden',
-                        background: '#f3f4f6', display: 'flex', alignItems: 'center',
-                        justifyContent: 'center', flexShrink: 0,
-                      }}>
-                        {scannedVisitor.visitorPhoto
-                          ? <img src={scannedVisitor.visitorPhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                          : <User size={20} color="#9ca3af" />}
-                      </div>
-                      <div>
-                        <p style={{ fontWeight: 700, fontSize: '0.95rem', margin: 0 }}>{scannedVisitor.name}</p>
-                        <p style={{ color: '#6b7280', fontSize: '0.78rem', margin: 0 }}>ID: {scannedVisitor.id}</p>
-                      </div>
-                    </div>
-
-                    {/* Mini details */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.3rem', fontSize: '0.78rem', marginBottom: '0.9rem', color: '#374151' }}>
-                      <div><span style={{ color: '#6b7280' }}>Purpose: </span>{scannedVisitor.purpose || '—'}</div>
-                      <div><span style={{ color: '#6b7280' }}>Dept: </span>{scannedVisitor.department || '—'}</div>
-                      <div><span style={{ color: '#6b7280' }}>Entry: </span>{formatTime(scannedVisitor.entryTime)}</div>
-                      {scannedVisitor.exitTime && (
-                        <div><span style={{ color: '#6b7280' }}>Exit: </span>{formatTime(scannedVisitor.exitTime)}</div>
-                      )}
-                    </div>
-
-                    <button className="btn btn-primary btn-block" onClick={() => { reset(); }}>
-                      <QrCode size={16} /> Scan Next
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div style={{ padding: '0.75rem 1rem' }}>
-              <button
-                className="btn btn-secondary btn-block"
-                onClick={() => { setScanning(false); reset(); }}
-              >
-                Stop Scanner
+                <LogOut size={16} /> Check Out Next Visitor
               </button>
             </div>
           </div>

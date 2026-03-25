@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Shield, LayoutDashboard, QrCode, UserPlus, Menu, X, ShieldCheck } from 'lucide-react';
+import { Shield, LayoutDashboard, LogOut, UserPlus, Menu, X, ShieldCheck } from 'lucide-react';
 
 const Navbar = () => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -11,7 +11,7 @@ const Navbar = () => {
   const links = [
     { to: '/dashboard', label: 'Dashboard',       icon: LayoutDashboard },
     { to: '/guards',    label: 'Guard Station',   icon: ShieldCheck },
-    { to: '/scan',      label: 'Scan QR',         icon: QrCode },
+    { to: '/scan',      label: 'Check Out',       icon: LogOut },
     { to: '/register',  label: 'Register Visitor', icon: UserPlus },
   ];
 
