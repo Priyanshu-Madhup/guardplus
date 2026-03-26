@@ -16,7 +16,7 @@ import numpy as np
 from groq import Groq
 
 from dotenv import load_dotenv, dotenv_values
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
 from pydantic import BaseModel, EmailStr
@@ -117,21 +117,27 @@ class EmailPassRequest(BaseModel):
     pdf_base64: str
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def get_mail_conf():
-    """Read credentials fresh from .env on every call."""
-    env = dotenv_values(os.path.join(os.path.dirname(__file__), ".env"))
-    return ConnectionConfig(
-        MAIL_USERNAME=env.get("MAIL_USERNAME"),
-        MAIL_PASSWORD=env.get("MAIL_PASSWORD"),
-        MAIL_FROM=env.get("MAIL_FROM"),
-        MAIL_PORT=int(env.get("MAIL_PORT", "587")),
-        MAIL_SERVER=env.get("MAIL_SERVER", "smtp.gmail.com"),
-        MAIL_FROM_NAME="GuardPlus Visitor System",
-        MAIL_STARTTLS=True,
-        MAIL_SSL_TLS=False,
-        USE_CREDENTIALS=True,
-        VALIDATE_CERTS=False,
-    )
+# Cache the mail config once so we don't re-read .env on every email send.
+_MAIL_CONF: Optional[ConnectionConfig] = None
+
+def get_mail_conf() -> ConnectionConfig:
+    """Return a cached ConnectionConfig, building it once from .env."""
+    global _MAIL_CONF
+    if _MAIL_CONF is None:
+        env = dotenv_values(os.path.join(os.path.dirname(__file__), ".env"))
+        _MAIL_CONF = ConnectionConfig(
+            MAIL_USERNAME=env.get("MAIL_USERNAME"),
+            MAIL_PASSWORD=env.get("MAIL_PASSWORD"),
+            MAIL_FROM=env.get("MAIL_FROM"),
+            MAIL_PORT=int(env.get("MAIL_PORT", "587")),
+            MAIL_SERVER=env.get("MAIL_SERVER", "smtp.gmail.com"),
+            MAIL_FROM_NAME="GuardPlus Visitor System",
+            MAIL_STARTTLS=True,
+            MAIL_SSL_TLS=False,
+            USE_CREDENTIALS=True,
+            VALIDATE_CERTS=False,
+        )
+    return _MAIL_CONF
 
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/")
@@ -317,13 +323,18 @@ async def test_smtp():
         raise HTTPException(status_code=500, detail=str(e))
 
 # ── Email ─────────────────────────────────────────────────────────────────────
-@app.post("/api/send-pass-email")
-async def send_pass_email(req: EmailPassRequest):
+async def _send_pass_email_task(
+    visitor_email: str,
+    visitor_name: str,
+    pass_id: str,
+    pdf_bytes: bytes,
+) -> None:
+    """
+    Actual SMTP work – runs as a FastAPI BackgroundTask so the HTTP response
+    is returned to the client immediately while this runs asynchronously.
+    """
     tmp_path = None
     try:
-        pdf_bytes = base64.b64decode(req.pdf_base64)
-
-        # Write PDF to a temp file; fastapi-mail reads it from disk
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp_path = tmp.name
@@ -348,7 +359,7 @@ async def send_pass_email(req: EmailPassRequest):
           <!-- Body -->
           <div style="padding:28px 24px;background:#f9fafb;">
             <h2 style="color:#111827;margin:0 0 8px;font-size:20px;">
-              Hello, {req.visitor_name}!
+              Hello, {visitor_name}!
             </h2>
             <p style="color:#6b7280;margin:0 0 20px;line-height:1.6;">
               Your digital visitor pass has been generated successfully.
@@ -360,7 +371,7 @@ async def send_pass_email(req: EmailPassRequest):
                         padding:14px 18px;margin-bottom:20px;
                         border-left:4px solid #16a34a;">
               <p style="margin:0;color:#15803d;font-weight:700;font-size:15px;">
-                &#10003;&nbsp; Pass ID: {req.pass_id}
+                &#10003;&nbsp; Pass ID: {pass_id}
               </p>
             </div>
 
@@ -379,8 +390,8 @@ async def send_pass_email(req: EmailPassRequest):
         """
 
         message = MessageSchema(
-            subject=f"GuardPlus — Your Visitor Pass ({req.pass_id})",
-            recipients=[req.visitor_email],
+            subject=f"GuardPlus — Your Visitor Pass ({pass_id})",
+            recipients=[visitor_email],
             body=html_body,
             subtype=MessageType.html,
             attachments=[tmp_path],
@@ -388,15 +399,35 @@ async def send_pass_email(req: EmailPassRequest):
 
         fm = FastMail(get_mail_conf())
         await fm.send_message(message)
-        return {"success": True, "message": f"Pass emailed to {req.visitor_email}"}
+        print(f"[Email] Pass sent to {visitor_email}")
 
-    except base64.binascii.Error:
-        raise HTTPException(status_code=400, detail="Invalid PDF data received.")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"[Email] Failed to send to {visitor_email}: {e}")
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
+
+
+@app.post("/api/send-pass-email", status_code=202)
+async def send_pass_email(req: EmailPassRequest, background_tasks: BackgroundTasks):
+    """
+    Accepts the email request and returns 202 Accepted immediately.
+    The actual SMTP send happens in the background so the UI is never blocked.
+    """
+    try:
+        pdf_bytes = base64.b64decode(req.pdf_base64)
+    except base64.binascii.Error:
+        raise HTTPException(status_code=400, detail="Invalid PDF data received.")
+
+    background_tasks.add_task(
+        _send_pass_email_task,
+        req.visitor_email,
+        req.visitor_name,
+        req.pass_id,
+        pdf_bytes,
+    )
+    return {"success": True, "message": f"Email queued for {req.visitor_email}"}
+
 
 
 # ── Guard Face Recognition ────────────────────────────────────────────────────
