@@ -5,10 +5,12 @@ import re
 import shutil
 import smtplib
 import tempfile
+from contextlib import asynccontextmanager as _acm
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import aiosqlite
 import cv2
 import numpy as np
 from groq import Groq
@@ -17,14 +19,12 @@ from dotenv import load_dotenv, dotenv_values
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr
 
 load_dotenv(override=True)
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DB_NAME   = "guardplus"
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# ── SQLite configuration ──────────────────────────────────────────────────────
+DB_PATH = os.getenv("DB_PATH", str(Path(__file__).parent / "guardplus.db"))
 
 app = FastAPI(title="GuardPlus API", version="2.0.0")
 
@@ -37,18 +37,44 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── MongoDB client (created once at startup) ─────────────────────────────────
-mongo_client: AsyncIOMotorClient = None
-db = None
+# ── SQLite helpers ────────────────────────────────────────────────────────────
+@_acm
+async def get_db():
+    """Async context manager that opens and closes a per-request SQLite connection."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+        yield conn
+
+
+def row_to_dict(row: aiosqlite.Row) -> dict:
+    return dict(row)
+
 
 @app.on_event("startup")
 async def startup():
-    global mongo_client, db
-    mongo_client = AsyncIOMotorClient(MONGO_URI)
-    db = mongo_client[DB_NAME]
+    """Create the visitors table if it doesn't exist, then pre-warm face embeddings."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS visitors (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL,
+                phone       TEXT NOT NULL,
+                email       TEXT DEFAULT '',
+                purpose     TEXT NOT NULL,
+                personToMeet TEXT NOT NULL,
+                department  TEXT NOT NULL,
+                visitorPhoto TEXT,
+                guardPhoto  TEXT,
+                entryTime   TEXT NOT NULL,
+                entryDate   TEXT,
+                exitTime    TEXT,
+                status      TEXT DEFAULT 'active',
+                guard       TEXT DEFAULT 'Guard on Duty'
+            )
+        """)
+        await db.commit()
 
-    # Pre-warm DeepFace model and build embeddings cache so the first
-    # verify request is not slow.
+    # Pre-warm DeepFace model and build embeddings cache
     image_files = [
         f for f in DATASET_DIR.iterdir()
         if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS
@@ -59,10 +85,10 @@ async def startup():
         except Exception as warmup_err:
             print(f"[Startup] Embeddings pre-warm failed (non-fatal): {warmup_err}")
 
+
 @app.on_event("shutdown")
 async def shutdown():
-    if mongo_client:
-        mongo_client.close()
+    pass  # aiosqlite connections are closed per-request
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class VisitorIn(BaseModel):
@@ -91,10 +117,6 @@ class EmailPassRequest(BaseModel):
     pdf_base64: str
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def serialize(doc: dict) -> dict:
-    doc["_id"] = str(doc["_id"])
-    return doc
-
 def get_mail_conf():
     """Read credentials fresh from .env on every call."""
     env = dotenv_values(os.path.join(os.path.dirname(__file__), ".env"))
@@ -125,9 +147,18 @@ async def root():
 @app.post("/api/visitors", status_code=201)
 async def create_visitor(visitor: VisitorIn):
     doc = visitor.dict()
-    result = await db.visitors.insert_one(doc)
-    doc["_id"] = str(result.inserted_id)
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO visitors
+              (id, name, phone, email, purpose, personToMeet, department,
+               visitorPhoto, guardPhoto, entryTime, entryDate, exitTime, status, guard)
+            VALUES
+              (:id, :name, :phone, :email, :purpose, :personToMeet, :department,
+               :visitorPhoto, :guardPhoto, :entryTime, :entryDate, :exitTime, :status, :guard)
+        """, doc)
+        await db.commit()
     return doc
+
 
 @app.get("/api/visitors")
 async def list_visitors(date: Optional[str] = None, status: Optional[str] = None):
@@ -136,28 +167,35 @@ async def list_visitors(date: Optional[str] = None, status: Optional[str] = None
     - date: YYYY-MM-DD  (matches entryDate field OR falls back to entryTime UTC prefix)
     - status: 'active' | 'exited' | omit for all
     """
-    query: dict = {}
-    if date:
-        # Match entryDate field (local date stored at registration) if present,
-        # otherwise fall back to UTC prefix match on entryTime
-        query["$or"] = [
-            {"entryDate": date},
-            {"entryTime": {"$regex": f"^{date}"}},
-        ]
-    if status and status != "all":
-        query["status"] = status
+    conditions = []
+    params: list = []
 
-    visitors = []
-    async for doc in db.visitors.find(query).sort("entryTime", -1):
-        visitors.append(serialize(doc))
-    return visitors
+    if date:
+        conditions.append("(entryDate = ? OR entryTime LIKE ?)")
+        params.extend([date, f"{date}%"])
+    if status and status != "all":
+        conditions.append("status = ?")
+        params.append(status)
+
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+    sql = f"SELECT * FROM visitors {where} ORDER BY entryTime DESC"
+
+    async with get_db() as db:
+        async with db.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+    return [row_to_dict(r) for r in rows]
+
 
 @app.get("/api/visitors/{visitor_id}")
 async def get_visitor(visitor_id: str):
-    doc = await db.visitors.find_one({"id": visitor_id})
-    if not doc:
+    async with get_db() as db:
+        async with db.execute("SELECT * FROM visitors WHERE id = ?", [visitor_id]) as cursor:
+            row = await cursor.fetchone()
+    if not row:
         raise HTTPException(status_code=404, detail="Visitor not found")
-    return serialize(doc)
+    return row_to_dict(row)
+
 
 @app.post("/api/visitors/{visitor_id}/checkout")
 async def checkout_visitor(visitor_id: str, req: CheckoutRequest = None):
@@ -165,15 +203,19 @@ async def checkout_visitor(visitor_id: str, req: CheckoutRequest = None):
         req.exitTime if (req and req.exitTime) else None
     ) or datetime.now(timezone.utc).isoformat()
 
-    result = await db.visitors.update_one(
-        {"id": visitor_id},
-        {"$set": {"status": "exited", "exitTime": exit_time}},
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Visitor not found")
+    async with get_db() as db:
+        result = await db.execute(
+            "UPDATE visitors SET status = 'exited', exitTime = ? WHERE id = ?",
+            [exit_time, visitor_id],
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Visitor not found")
 
-    doc = await db.visitors.find_one({"id": visitor_id})
-    return serialize(doc)
+        async with db.execute("SELECT * FROM visitors WHERE id = ?", [visitor_id]) as cursor:
+            row = await cursor.fetchone()
+
+    return row_to_dict(row)
 
 
 @app.post("/api/scan-qr")
@@ -232,21 +274,28 @@ async def scan_qr(image: UploadFile = File(...)):
     except (json.JSONDecodeError, ValueError):
         pass  # plain ID string
 
-    # Look up visitor
-    doc = await db.visitors.find_one({"id": visitor_id})
-    if not doc:
-        raise HTTPException(status_code=404, detail=f"Visitor '{visitor_id}' not found in database.")
+    async with get_db() as db:
+        # Look up visitor
+        async with db.execute("SELECT * FROM visitors WHERE id = ?", [visitor_id]) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail=f"Visitor '{visitor_id}' not found in database.")
 
-    # Auto-checkout if active
-    if doc.get("status") == "active":
-        exit_time = datetime.now(timezone.utc).isoformat()
-        await db.visitors.update_one(
-            {"id": visitor_id},
-            {"$set": {"status": "exited", "exitTime": exit_time}},
-        )
-        doc = await db.visitors.find_one({"id": visitor_id})
+        doc = row_to_dict(row)
 
-    return serialize(doc)
+        # Auto-checkout if active
+        if doc.get("status") == "active":
+            exit_time = datetime.now(timezone.utc).isoformat()
+            await db.execute(
+                "UPDATE visitors SET status = 'exited', exitTime = ? WHERE id = ?",
+                [exit_time, visitor_id],
+            )
+            await db.commit()
+            async with db.execute("SELECT * FROM visitors WHERE id = ?", [visitor_id]) as cursor:
+                row = await cursor.fetchone()
+            doc = row_to_dict(row)
+
+    return doc
 
 
 # ── SMTP test ─────────────────────────────────────────────────────────────────
@@ -537,6 +586,9 @@ def _load_embeddings_cache() -> dict:
 
     # Cache missing or stale – rebuild
     return _build_embeddings_cache()
+
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 
 @app.post("/api/guards/register", status_code=201)

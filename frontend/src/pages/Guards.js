@@ -17,13 +17,6 @@ const todayStr = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
-// Compare an ISO entryTime string against a YYYY-MM-DD local date
-const matchesLocalDate = (entryTime, dateStr) => {
-  if (!entryTime) return false;
-  const d = new Date(entryTime);
-  const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return local === dateStr;
-};
 
 const Guards = () => {
   const [selectedDate, setSelectedDate] = useState(todayStr());
@@ -38,28 +31,15 @@ const Guards = () => {
     setLoading(true);
     setError('');
 
-    // Always read localStorage (catches data registered before MongoDB was set up)
-    const stored = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-    const localForDate = stored.filter((v) => matchesLocalDate(v.entryTime, selectedDate));
-
     try {
       const params = new URLSearchParams({ date: selectedDate });
       const res = await fetch(`${API_BASE}/api/visitors?${params}`);
       if (!res.ok) throw new Error(`Server responded ${res.status}`);
       const dbData = await res.json();
-
-      // Merge: MongoDB records take precedence; append localStorage records not in DB
-      const merged = [
-        ...dbData,
-        ...localForDate.filter((ls) => !dbData.find((db) => db.id === ls.id)),
-      ];
-      setVisitors(merged);
-    } catch {
-      // Backend unreachable — show localStorage data only
-      setVisitors(localForDate);
-      if (localForDate.length === 0) {
-        setError('Cannot reach the server. Showing cached data only (none found for this date).');
-      }
+      setVisitors(dbData);
+    } catch (err) {
+      setVisitors([]);
+      setError('Cannot reach the server. Make sure the backend is running.');
     } finally {
       setLoading(false);
       setLastUpdated(new Date());

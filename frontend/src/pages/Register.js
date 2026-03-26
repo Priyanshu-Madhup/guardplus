@@ -5,7 +5,7 @@ import CameraCapture from '../components/CameraCapture';
 import API_BASE from '../api';
 
 const DEPARTMENTS = [
-  'Computer Science', 'Electronics', 'Mechanical', 'Civil',
+  'Computer Science', 'Information Science', 'Artificial Intelligence and Machine Learning', 'Electronics and Communication', 'Artificial Intelligence and Data Science',
   'Administration', 'Library', 'Management', 'Other',
 ];
 
@@ -186,16 +186,16 @@ const Register = () => {
   };
 
   const validate = () => {
-    if (!form.name.trim())                         return 'Visitor name is required.';
-    if (!/^\d{10}$/.test(form.phone.trim()))       return 'Enter a valid 10-digit phone number.';
-    if (!form.purpose)                             return 'Please select a purpose of visit.';
-    if (!form.personToMeet.trim())                 return 'Person to meet is required.';
-    if (!form.department)                          return 'Please select a department.';
-    if (!guardPhoto)                               return 'Guard authorization photo is required.';
-    if (guardVerifyStatus === 'verifying')         return 'Please wait — verifying guard identity…';
-    if (guardVerifyStatus === 'no_face')           return 'No face detected in guard photo. Please retake.';
-    if (guardVerifyStatus === 'network_error')     return 'Cannot connect to backend server. Start it with: uvicorn main:app --reload --port 8000 --host 0.0.0.0';
-    if (guardVerifyStatus !== 'verified')          return 'Guard face not recognized. Cannot generate pass.';
+    if (!form.name.trim()) return 'Visitor name is required.';
+    if (!/^\d{10}$/.test(form.phone.trim())) return 'Enter a valid 10-digit phone number.';
+    if (!form.purpose) return 'Please select a purpose of visit.';
+    if (!form.personToMeet.trim()) return 'Person to meet is required.';
+    if (!form.department) return 'Please select a department.';
+    if (!guardPhoto) return 'Guard authorization photo is required.';
+    if (guardVerifyStatus === 'verifying') return 'Please wait — verifying guard identity…';
+    if (guardVerifyStatus === 'no_face') return 'No face detected in guard photo. Please retake.';
+    if (guardVerifyStatus === 'network_error') return 'Cannot connect to backend server. Start it with: uvicorn main:app --reload --port 8000 --host 0.0.0.0';
+    if (guardVerifyStatus !== 'verified') return 'Guard face not recognized. Cannot generate pass.';
     return null;
   };
 
@@ -227,19 +227,9 @@ const Register = () => {
       });
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const saved = await res.json();
-      const { visitorPhoto: _vp, guardPhoto: _gp, ...lightRecord } = saved;
-      const existing = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-      try {
-        localStorage.setItem('guardplus_visitors', JSON.stringify([lightRecord, ...existing]));
-      } catch { /* quota */ }
       navigate(`/pass/${saved.id}`, { state: { visitor: saved } });
-    } catch {
-      const { visitorPhoto: _vp, guardPhoto: _gp, ...lightRecord } = visitor;
-      const existing = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-      try {
-        localStorage.setItem('guardplus_visitors', JSON.stringify([lightRecord, ...existing]));
-      } catch { /* quota */ }
-      navigate(`/pass/${id}`, { state: { visitor } });
+    } catch (err) {
+      setError('Failed to save visitor to database. Please make sure the backend server is running and try again.');
     } finally {
       setLoading(false);
     }

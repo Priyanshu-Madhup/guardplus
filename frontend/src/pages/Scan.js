@@ -30,40 +30,33 @@ const Scan = () => {
       return;
     }
 
-    // 1. Backend
     try {
       const res = await fetch(`${API_BASE}/api/visitors/${idToLookup}`);
-      if (res.ok) {
-        const visitor = await res.json();
-        setLookupLoading(false);
-        if (visitor.status === 'active') {
-          setScannedVisitor(visitor);
-          await performCheckout(visitor, idToLookup);
+      if (!res.ok) {
+        if (res.status === 404) {
+          setScanError('Visitor not found. Please check the ID and try again.');
         } else {
-          setScannedVisitor(visitor);
-          setCheckedOut(false);
+          setScanError(`Server error (${res.status}). Please try again.`);
         }
         processingRef.current = false;
+        setLookupLoading(false);
         return;
       }
-    } catch { /* unreachable */ }
-
-    // 2. localStorage fallback
-    const stored = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-    const found  = stored.find((v) => v.id === idToLookup);
-    if (found) {
-      if (found.status === 'active') {
-        setScannedVisitor(found);
-        await performCheckout(found, idToLookup);
+      const visitor = await res.json();
+      setLookupLoading(false);
+      if (visitor.status === 'active') {
+        setScannedVisitor(visitor);
+        await performCheckout(visitor, idToLookup);
       } else {
-        setScannedVisitor(found);
+        setScannedVisitor(visitor);
         setCheckedOut(false);
       }
-    } else {
-      setScanError('Visitor not found. Please check the ID and try again.');
+    } catch {
+      setScanError('Cannot reach the server. Make sure the backend is running.');
       processingRef.current = false;
+      setLookupLoading(false);
     }
-    setLookupLoading(false);
+    processingRef.current = false;
   };
 
   /* ── Checkout visitor ── */
@@ -77,19 +70,11 @@ const Scan = () => {
       });
       if (!res.ok) throw new Error();
       const updated = await res.json();
-      const stored  = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-      localStorage.setItem('guardplus_visitors',
-        JSON.stringify(stored.map((v) => v.id === updated.id ? { ...v, status: 'exited', exitTime } : v))
-      );
       setScannedVisitor(updated);
       setCheckedOut(true);
     } catch {
-      const stored = JSON.parse(localStorage.getItem('guardplus_visitors') || '[]');
-      localStorage.setItem('guardplus_visitors',
-        JSON.stringify(stored.map((v) => v.id === visitorId ? { ...v, status: 'exited', exitTime } : v))
-      );
-      setScannedVisitor((p) => ({ ...p, status: 'exited', exitTime }));
-      setCheckedOut(true);
+      setScanError('Checkout failed. Cannot reach the server.');
+      processingRef.current = false;
     }
   };
 
