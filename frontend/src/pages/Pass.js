@@ -4,6 +4,7 @@ import { Download, Maximize2, X, ArrowLeft, CheckCircle, Mail, Loader } from 'lu
 import { QRCodeCanvas } from 'qrcode.react';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+
 import PassCard from '../components/PassCard';
 import { getVisitorById, mockVisitors } from '../mockData';
 import API_BASE from '../api';
@@ -48,12 +49,8 @@ const Pass = () => {
   const generatePDF = async () => {
     const source = passCardRef.current;
 
-    // 1. Grab QR canvas data URL BEFORE cloning (canvas pixels can't be cloned)
-    const qrCanvas = source.querySelector('canvas');
-    const qrDataUrl = qrCanvas ? qrCanvas.toDataURL('image/png') : null;
-
-    // 2. Build an off-screen wrapper with fixed width so html2canvas
-    //    sees the full card height regardless of scroll / viewport
+    // Build an off-screen wrapper with fixed width so html2canvas
+    // sees the full card height regardless of scroll / viewport
     const wrapper = document.createElement('div');
     Object.assign(wrapper.style, {
       position:   'fixed',
@@ -67,34 +64,15 @@ const Pass = () => {
     });
 
     const clone = source.cloneNode(true);
-    clone.style.width      = '100%';
-    clone.style.boxShadow  = 'none';
+    clone.style.width        = '100%';
+    clone.style.boxShadow    = 'none';
     clone.style.borderRadius = '16px';
-
-    // 3. Replace every <canvas> in the clone with a plain <img>
-    //    html2canvas cannot read canvas cross-origin pixel data
-    if (qrDataUrl) {
-      clone.querySelectorAll('canvas').forEach((c) => {
-        const img = document.createElement('img');
-        img.src    = qrDataUrl;
-        // The QRCodeCanvas renders at devicePixelRatio; halve back to CSS px
-        const dpr  = window.devicePixelRatio || 1;
-        img.width  = c.width  / dpr;
-        img.height = c.height / dpr;
-        Object.assign(img.style, {
-          display: 'block',
-          margin:  'auto',
-        });
-        c.parentNode.replaceChild(img, c);
-      });
-    }
 
     wrapper.appendChild(clone);
     document.body.appendChild(wrapper);
 
     try {
-      // 4. Capture full height of the cloned card
-      const fullH = wrapper.scrollHeight;
+      const fullH  = wrapper.scrollHeight;
       const canvas = await html2canvas(wrapper, {
         scale:           2,
         useCORS:         true,
@@ -106,22 +84,12 @@ const Pass = () => {
         windowHeight:    fullH,
       });
 
-      const imgData = canvas.toDataURL('image/png');
-      const imgPxW  = canvas.width;
-      const imgPxH  = canvas.height;
+      const imgData  = canvas.toDataURL('image/png');
+      const mmFactor = 25.4 / 96;         // px → mm at 96 dpi
+      const cardMmW  = canvas.width  * mmFactor;
+      const cardMmH  = canvas.height * mmFactor;
 
-      // 5. Create a custom-sized PDF that matches the card exactly —
-      //    no margins needed, always exactly 1 page, nothing cut
-      const mmFactor  = 25.4 / 96;          // px → mm at 96 dpi
-      const cardMmW   = imgPxW * mmFactor;
-      const cardMmH   = imgPxH * mmFactor;
-
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit:        'mm',
-        format:      [cardMmW, cardMmH],
-      });
-
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: [cardMmW, cardMmH] });
       pdf.addImage(imgData, 'PNG', 0, 0, cardMmW, cardMmH);
       return pdf;
     } finally {
@@ -149,8 +117,6 @@ const Pass = () => {
     setEmailLoading(true);
     setEmailError('');
     try {
-      const pdf = await generatePDF();
-      const pdfBase64 = pdf.output('datauristring').split(',')[1];
       const res = await fetch(`${API_BASE}/api/send-pass-email`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -158,7 +124,11 @@ const Pass = () => {
           visitor_email: visitor.email,
           visitor_name: visitor.name,
           pass_id: visitor.id,
-          pdf_base64: pdfBase64,
+          purpose: visitor.purpose || '',
+          department: visitor.department || '',
+          person_to_meet: visitor.personToMeet || '',
+          entry_time: visitor.entryTime || '',
+          guard: visitor.guard || 'Guard on Duty',
         }),
       });
       if (!res.ok) {

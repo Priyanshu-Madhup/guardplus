@@ -1,8 +1,6 @@
-import base64
 import os
 import pickle
 import re
-import shutil
 import smtplib
 import tempfile
 from contextlib import asynccontextmanager as _acm
@@ -114,7 +112,11 @@ class EmailPassRequest(BaseModel):
     visitor_email: EmailStr
     visitor_name: str
     pass_id: str
-    pdf_base64: str
+    purpose: Optional[str] = ""
+    department: Optional[str] = ""
+    person_to_meet: Optional[str] = ""
+    entry_time: Optional[str] = ""
+    guard: Optional[str] = "Guard on Duty"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 # Cache the mail config once so we don't re-read .env on every email send.
@@ -327,66 +329,131 @@ async def _send_pass_email_task(
     visitor_email: str,
     visitor_name: str,
     pass_id: str,
-    pdf_bytes: bytes,
+    purpose: str = "",
+    department: str = "",
+    person_to_meet: str = "",
+    entry_time: str = "",
+    guard: str = "Guard on Duty",
 ) -> None:
     """
-    Actual SMTP work – runs as a FastAPI BackgroundTask so the HTTP response
-    is returned to the client immediately while this runs asynchronously.
+    Sends a beautiful HTML visitor pass directly in the email body.
+    No PDF attachment — runs as a FastAPI BackgroundTask.
     """
-    tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(pdf_bytes)
-            tmp_path = tmp.name
+        # Format the entry time nicely if it's an ISO string
+        display_time = entry_time
+        try:
+            from datetime import datetime
+            dt = datetime.fromisoformat(entry_time.replace("Z", "+00:00"))
+            display_time = dt.strftime("%d %b %Y, %I:%M %p")
+        except Exception:
+            pass
 
         html_body = f"""
-        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;
-                    border-radius:12px;overflow:hidden;
-                    box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:20px 0;background:#f0fdf4;font-family:'Segoe UI',Arial,sans-serif;">
 
-          <!-- Header -->
-          <div style="background:linear-gradient(135deg,#16a34a,#15803d);
-                      padding:28px 24px;text-align:center;">
-            <h1 style="color:white;margin:0;font-size:26px;letter-spacing:-0.5px;">
-              &#128737; GuardPlus
-            </h1>
-            <p style="color:rgba(255,255,255,0.8);margin:6px 0 0;
-                      font-size:12px;letter-spacing:2px;">
-              VISITOR MANAGEMENT SYSTEM
-            </p>
-          </div>
+  <div style="max-width:520px;margin:0 auto;">
 
-          <!-- Body -->
-          <div style="padding:28px 24px;background:#f9fafb;">
-            <h2 style="color:#111827;margin:0 0 8px;font-size:20px;">
-              Hello, {visitor_name}!
-            </h2>
-            <p style="color:#6b7280;margin:0 0 20px;line-height:1.6;">
-              Your digital visitor pass has been generated successfully.
-              The pass PDF is attached to this email.
-            </p>
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#16a34a 0%,#15803d 100%);
+                border-radius:16px 16px 0 0;padding:32px 28px;text-align:center;">
+      <div style="display:inline-flex;align-items:center;gap:10px;">
+        <div style="width:38px;height:38px;background:rgba(255,255,255,0.2);
+                    border-radius:10px;display:flex;align-items:center;justify-content:center;
+                    font-size:20px;">&#128737;</div>
+        <span style="color:#fff;font-size:24px;font-weight:700;letter-spacing:-0.5px;">GuardPlus</span>
+      </div>
+      <p style="color:rgba(255,255,255,0.75);margin:8px 0 0;font-size:11px;
+                letter-spacing:3px;text-transform:uppercase;">Visitor Management System</p>
+    </div>
 
-            <!-- Pass ID pill -->
-            <div style="background:#dcfce7;border-radius:8px;
-                        padding:14px 18px;margin-bottom:20px;
-                        border-left:4px solid #16a34a;">
-              <p style="margin:0;color:#15803d;font-weight:700;font-size:15px;">
-                &#10003;&nbsp; Pass ID: {pass_id}
-              </p>
-            </div>
+    <!-- Pass Card -->
+    <div style="background:#fff;border-radius:0 0 16px 16px;
+                box-shadow:0 8px 32px rgba(22,163,74,0.12);padding:32px 28px;">
 
-            <p style="color:#6b7280;font-size:14px;margin:0;line-height:1.6;">
-              Please show the attached PDF (or the QR code on the pass) at the
-              <strong style="color:#111827;">exit gate</strong> when leaving campus.
-            </p>
-          </div>
+      <!-- Greeting -->
+      <h2 style="margin:0 0 6px;color:#111827;font-size:22px;font-weight:700;">Hello, {visitor_name}!</h2>
+      <p style="margin:0 0 28px;color:#6b7280;font-size:14px;line-height:1.6;">
+        Your visitor pass has been issued. Please keep the <strong style="color:#111827;">Pass ID</strong> handy when at the exit gate.
+      </p>
 
-          <!-- Footer -->
-          <div style="padding:14px;text-align:center;
-                      background:#f3f4f6;color:#9ca3af;font-size:12px;">
-            GuardPlus &bull; Campus Visitor Management &bull; Automated System
-          </div>
-        </div>
+      <!-- Pass ID Banner -->
+      <div style="background:linear-gradient(135deg,#dcfce7,#bbf7d0);
+                  border:1.5px solid #86efac;border-radius:12px;
+                  padding:18px 22px;margin-bottom:24px;text-align:center;">
+        <p style="margin:0 0 4px;color:#15803d;font-size:11px;letter-spacing:2px;
+                  text-transform:uppercase;font-weight:600;">Pass ID</p>
+        <p style="margin:0;color:#14532d;font-size:26px;font-weight:800;
+                  letter-spacing:1px;font-family:monospace;">{pass_id}</p>
+      </div>
+
+      <!-- Info Grid -->
+      <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+        <tr>
+          <td style="width:50%;padding:0 8px 14px 0;vertical-align:top;">
+            <p style="margin:0 0 3px;color:#9ca3af;font-size:11px;letter-spacing:1px;
+                      text-transform:uppercase;font-weight:600;">Purpose</p>
+            <p style="margin:0;color:#111827;font-size:14px;font-weight:600;">{purpose or '—'}</p>
+          </td>
+          <td style="width:50%;padding:0 0 14px 8px;vertical-align:top;">
+            <p style="margin:0 0 3px;color:#9ca3af;font-size:11px;letter-spacing:1px;
+                      text-transform:uppercase;font-weight:600;">Department</p>
+            <p style="margin:0;color:#111827;font-size:14px;font-weight:600;">{department or '—'}</p>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:0 8px 0 0;vertical-align:top;">
+            <p style="margin:0 0 3px;color:#9ca3af;font-size:11px;letter-spacing:1px;
+                      text-transform:uppercase;font-weight:600;">Meeting</p>
+            <p style="margin:0;color:#111827;font-size:14px;font-weight:600;">{person_to_meet or '—'}</p>
+          </td>
+          <td style="padding:0 0 0 8px;vertical-align:top;">
+            <p style="margin:0 0 3px;color:#9ca3af;font-size:11px;letter-spacing:1px;
+                      text-transform:uppercase;font-weight:600;">Entry Time</p>
+            <p style="margin:0;color:#111827;font-size:14px;font-weight:600;">{display_time}</p>
+          </td>
+        </tr>
+      </table>
+
+      <!-- Divider -->
+      <hr style="border:none;border-top:1px solid #f3f4f6;margin:0 0 20px;">
+
+      <!-- Status Badge -->
+      <div style="display:inline-flex;align-items:center;gap:8px;
+                  background:#f0fdf4;border:1px solid #bbf7d0;
+                  border-radius:999px;padding:7px 16px;margin-bottom:20px;">
+        <span style="width:8px;height:8px;background:#22c55e;border-radius:50%;display:inline-block;"></span>
+        <span style="color:#15803d;font-size:13px;font-weight:600;">Active Pass</span>
+      </div>
+
+      <!-- Authorized by -->
+      <p style="margin:0 0 28px;color:#9ca3af;font-size:13px;">
+        Authorized by: <strong style="color:#4b5563;">{guard}</strong>
+      </p>
+
+      <!-- CTA Box -->
+      <div style="background:#fafafa;border:1px solid #e5e7eb;border-radius:10px;
+                  padding:16px 18px;">
+        <p style="margin:0;color:#6b7280;font-size:13px;line-height:1.6;">
+          &#9432;&nbsp; Please <strong style="color:#111827;">show your Pass ID</strong> at the
+          exit gate when leaving the premises.
+        </p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p style="text-align:center;color:#9ca3af;font-size:11px;margin:20px 0 0;
+              letter-spacing:0.5px;">
+      GuardPlus &bull; Campus Visitor Management &bull; Automated System<br>
+      This is an automated message — please do not reply.
+    </p>
+
+  </div>
+</body>
+</html>
         """
 
         message = MessageSchema(
@@ -394,7 +461,6 @@ async def _send_pass_email_task(
             recipients=[visitor_email],
             body=html_body,
             subtype=MessageType.html,
-            attachments=[tmp_path],
         )
 
         fm = FastMail(get_mail_conf())
@@ -403,9 +469,6 @@ async def _send_pass_email_task(
 
     except Exception as e:
         print(f"[Email] Failed to send to {visitor_email}: {e}")
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
 
 
 @app.post("/api/send-pass-email", status_code=202)
@@ -414,17 +477,16 @@ async def send_pass_email(req: EmailPassRequest, background_tasks: BackgroundTas
     Accepts the email request and returns 202 Accepted immediately.
     The actual SMTP send happens in the background so the UI is never blocked.
     """
-    try:
-        pdf_bytes = base64.b64decode(req.pdf_base64)
-    except base64.binascii.Error:
-        raise HTTPException(status_code=400, detail="Invalid PDF data received.")
-
     background_tasks.add_task(
         _send_pass_email_task,
         req.visitor_email,
         req.visitor_name,
         req.pass_id,
-        pdf_bytes,
+        req.purpose,
+        req.department,
+        req.person_to_meet,
+        req.entry_time,
+        req.guard,
     )
     return {"success": True, "message": f"Email queued for {req.visitor_email}"}
 

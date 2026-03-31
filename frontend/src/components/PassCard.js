@@ -1,6 +1,6 @@
 import React from 'react';
-import { QRCodeCanvas } from 'qrcode.react';
 import { Shield, Clock, User, MapPin, UserCheck } from 'lucide-react';
+
 import { formatTime, formatDate } from '../mockData';
 
 const PassCard = ({ visitor }) => {
@@ -31,7 +31,7 @@ const PassCard = ({ visitor }) => {
     .toUpperCase()
     .slice(0, 2);
 
-  const qrData = JSON.stringify({ id, name, purpose, department, entryTime });
+
 
   const PhotoBox = ({ src, alt, fallback }) => (
     <div className="pass-photo-box">
@@ -110,13 +110,8 @@ const PassCard = ({ visitor }) => {
           Active Pass &nbsp;•&nbsp; {formatDate(entryTime)}
         </div>
 
-        {/* QR Code */}
-        <div className="pass-qr-section">
-          <QRCodeCanvas value={qrData} size={160} fgColor="#111827" level="H" />
-          <p className="pass-qr-label">Show this QR at the exit gate</p>
-        </div>
 
-        {/* Guard */}
+
         <p
           style={{
             textAlign: 'center',
