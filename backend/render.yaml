@@ -12,3 +12,9 @@ services:
         value: /var/data/guardplus.db
       - key: GROQ_API_KEY
         scope: build,runtime
+      - key: MAIL_USERNAME
+        scope: build,runtime
+      - key: MAIL_PASSWORD
+        scope: build,runtime
+      - key: MAIL_FROM
+        scope: build,runtime

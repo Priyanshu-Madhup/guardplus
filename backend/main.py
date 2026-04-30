@@ -505,10 +505,11 @@ EMBEDDINGS_CACHE_FILE = DATASET_DIR / "guard_embeddings.pkl"
 # ── Verification settings (tune these if recognition is too strict/loose) ───
 # Facenet512 is much more robust for real-world webcam captures than VGG-Face.
 # Cosine distance: same person ~0.0-0.45, different person >0.6
-# 0.50 is a safe balance — lenient enough for webcam vs reference photo,
-# strict enough to reject background/non-face images.
+# 0.40 is a strict threshold for Facenet512 — same-person captures score 0.2-0.4,
+# while different people typically score 0.6-1.0. This prevents random people
+# from being incorrectly verified as guards.
 VERIFY_MODEL     = "Facenet512"
-VERIFY_THRESHOLD = 0.60   # cosine distance; raised from 0.50 to handle cross-device captures
+VERIFY_THRESHOLD = 0.40   # cosine distance; lowered from 0.60 to prevent false matches
 VERIFY_DETECTOR  = "opencv"  # fast; use "retinaface" for better accuracy
 
 

@@ -53,7 +53,7 @@ GuardPlus is a full-stack web application that provides:
 
 ### Technical Features
 
-- FastAPI backend with MongoDB integration
+- FastAPI backend with SQLite (aiosqlite) integration
 - Real-time QR code scanning using html5-qrcode
 - Secure API endpoints with CORS configuration
 - Environment-based configuration management
@@ -66,7 +66,7 @@ GuardPlus is a full-stack web application that provides:
 
 ### Backend
 - **Framework**: FastAPI (Python)
-- **Database**: MongoDB
+- **Database**: SQLite via aiosqlite (async driver)
 - **AI/ML**: DeepFace (facial recognition), OpenCV (image processing)
 - **Email**: FastMail (FastAPI Mail)
 - **LLM**: Groq API (AI features)
@@ -101,7 +101,7 @@ Before you begin, ensure you have the following installed:
 
 ### Accounts Required
 
-- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) (free tier available)
+- [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) (free tier available) — *optional, local dev only*
 - [Groq API Key](https://console.groq.com/) (free tier available)
 - [Gmail Account](https://mail.google.com/) (for email notifications - optional)
 
@@ -157,9 +157,6 @@ This will install all required packages including:
 Create a `.env` file in the `backend` directory with the following variables:
 
 ```env
-# MongoDB Configuration
-MONGO_URI=mongodb+srv://username:password@cluster0.mongodb.net/guardplus?retryWrites=true&w=majority
-
 # Groq API Configuration
 GROQ_API_KEY=your_groq_api_key_here
 
@@ -167,8 +164,8 @@ GROQ_API_KEY=your_groq_api_key_here
 MAIL_USERNAME=your-email@gmail.com
 MAIL_PASSWORD=your-app-password
 
-# Frontend URL (for CORS)
-FRONTEND_URL=http://localhost:3000
+# Database (SQLite - leave as default)
+DB_PATH=./guardplus.db
 ```
 
 **Getting API Keys:**
@@ -248,11 +245,10 @@ The backend uses environment variables for all sensitive configuration. Here's w
 
 | Variable | Purpose | Example |
 |----------|---------|---------|
-| `MONGO_URI` | MongoDB connection string | `mongodb+srv://user:pass@cluster.mongodb.net/guardplus` |
 | `GROQ_API_KEY` | API key for Groq LLM service | `gsk_xxxxxxxxxxxxx` |
 | `MAIL_USERNAME` | Email address for sending notifications | `noreply@guardplus.com` |
 | `MAIL_PASSWORD` | Email app password (not regular password) | `xxxx xxxx xxxx xxxx` |
-| `FRONTEND_URL` | Frontend URL for CORS configuration | `http://localhost:3000` |
+| `DB_PATH` | Path to SQLite database | `./guardplus.db` |
 
 ### Frontend Configuration Details
 
@@ -266,16 +262,7 @@ The frontend uses environment variables to configure API endpoints:
 
 ## 🏃 Running Locally
 
-### Step 1: Start MongoDB (if running locally)
-
-```bash
-# On Windows with MongoDB installed
-mongod
-
-# Or use MongoDB Atlas (cloud)
-```
-
-### Step 2: Start Backend Server
+### Step 1: Start Backend Server
 
 ```bash
 cd backend
@@ -464,10 +451,10 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed steps.
 **Issue**: `ModuleNotFoundError: No module named 'fastapi'`
 - **Solution**: Ensure virtual environment is activated and run `pip install -r requirements.txt`
 
-**Issue**: `Connection refused - MongoDB not running`
-- **Solution**: 
-  - If local: Start MongoDB with `mongod`
-  - If Atlas: Verify MongoDB URI in `.env` and check IP whitelist on Atlas
+**Issue**: `Connection refused - Database not found`
+- **Solution**:
+  - SQLite database is created automatically at `backend/guardplus.db`
+  - Ensure the `DB_PATH` in `.env` points to a writable location
 
 **Issue**: `GROQ_API_KEY not found`
 - **Solution**: Create a Groq API key at https://console.groq.com/ and add to `.env`
@@ -587,7 +574,6 @@ For support, questions, or feature requests:
 
 - [ ] Clone repository
 - [ ] Install Node.js and Python
-- [ ] Create MongoDB Atlas account
 - [ ] Create Groq API key
 - [ ] Set up backend environment
 - [ ] Set up frontend environment
@@ -598,5 +584,5 @@ For support, questions, or feature requests:
 
 ---
 
-**Last Updated**: March 2026
+**Last Updated**: May 2026
 **Version**: 2.0.0

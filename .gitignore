@@ -37,3 +37,9 @@ ENV/
 .idea/
 *.swp
 *.swo
+
+# Backend
+backend/.env
+backend/guardplus.db
+backend/dataset/guard_embeddings.pkl
+backend/__pycache__/
