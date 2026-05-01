@@ -96,14 +96,13 @@ def serialize(doc: dict) -> dict:
     return doc
 
 def get_mail_conf():
-    """Read credentials fresh from .env on every call."""
-    env = dotenv_values(os.path.join(os.path.dirname(__file__), ".env"))
+    """Read credentials from environment variables."""
     return ConnectionConfig(
-        MAIL_USERNAME=env.get("MAIL_USERNAME"),
-        MAIL_PASSWORD=env.get("MAIL_PASSWORD"),
-        MAIL_FROM=env.get("MAIL_FROM"),
-        MAIL_PORT=int(env.get("MAIL_PORT", "587")),
-        MAIL_SERVER=env.get("MAIL_SERVER", "smtp.gmail.com"),
+        MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+        MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+        MAIL_FROM=os.getenv("MAIL_FROM"),
+        MAIL_PORT=int(os.getenv("MAIL_PORT", "587")),
+        MAIL_SERVER=os.getenv("MAIL_SERVER", "smtp.gmail.com"),
         MAIL_FROM_NAME="GuardPlus Visitor System",
         MAIL_STARTTLS=True,
         MAIL_SSL_TLS=False,
@@ -114,11 +113,10 @@ def get_mail_conf():
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    env = dotenv_values(os.path.join(os.path.dirname(__file__), ".env"))
     return {
         "status": "GuardPlus API is running",
-        "mail_user": env.get("MAIL_USERNAME", "NOT SET"),
-        "mail_server": env.get("MAIL_SERVER", "NOT SET"),
+        "mail_user": os.getenv("MAIL_USERNAME", "NOT SET"),
+        "mail_server": os.getenv("MAIL_SERVER", "NOT SET"),
     }
 
 # ── Visitor CRUD ──────────────────────────────────────────────────────────────
@@ -252,11 +250,10 @@ async def scan_qr(image: UploadFile = File(...)):
 # ── SMTP test ─────────────────────────────────────────────────────────────────
 @app.get("/api/test-smtp")
 async def test_smtp():
-    env  = dotenv_values(os.path.join(os.path.dirname(__file__), ".env"))
-    host = env.get("MAIL_SERVER", "smtp.gmail.com")
-    port = int(env.get("MAIL_PORT", "587"))
-    user = env.get("MAIL_USERNAME", "")
-    pwd  = env.get("MAIL_PASSWORD", "")
+    host = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+    port = int(os.getenv("MAIL_PORT", "587"))
+    user = os.getenv("MAIL_USERNAME", "")
+    pwd  = os.getenv("MAIL_PASSWORD", "")
     try:
         with smtplib.SMTP(host, port, timeout=10) as s:
             s.ehlo(); s.starttls(); s.ehlo()
