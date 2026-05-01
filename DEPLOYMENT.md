@@ -45,13 +45,13 @@ After deployment, you'll get a URL like: `https://guardplus-api.onrender.com`
    - Select the repository
 
 3. **Configure the project:**
-   - Framework Preset: `Create React App`
+   - Framework Preset: `Vite`
    - Root Directory: `frontend`
    - Build Command: `npm run build`
-   - Output Directory: `build`
+   - Output Directory: `dist`
 
 4. **Set Environment Variables:**
-   - Add `REACT_APP_API_URL` with value: `https://guardplus-api.onrender.com` (update with your actual backend URL)
+   - Add `VITE_API_BASE` with value: `https://guardplus-api.onrender.com` (update with your actual backend URL)
 
 5. **Deploy:**
    - Click "Deploy"
@@ -67,12 +67,7 @@ After deployment, you'll get a URL like: `https://guardplus.vercel.app`
 **In `frontend/src/api.js`**, update the API base URL:
 
 ```javascript
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-
-export const api = axios.create({
-  baseURL: API_BASE_URL,
-  // ... rest of config
-});
+const API_BASE_URL = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
 ```
 
 ---
