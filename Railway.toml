@@ -2,7 +2,7 @@
   entrypoint = "backend"
 
 [build]
-  command = "cd frontend && npm install && npm run build && cd ../backend && pip install -r requirements.txt"
+  command = "cd backend && pip install -r requirements.txt"
 
 [deploy]
   startCommand = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
