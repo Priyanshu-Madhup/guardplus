@@ -55,10 +55,7 @@ async def lifespan(app: FastAPI):
         if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS
     ] if DATASET_DIR.exists() else []
     if image_files:
-        try:
-            _build_embeddings_cache()
-        except Exception as warmup_err:
-            print(f"[Startup] Embeddings pre-warm failed (non-fatal): {warmup_err}")
+        print(f"[Startup] {len(image_files)} guard images found, skipping pre-warm (will build on first use)")
 
     yield
 
