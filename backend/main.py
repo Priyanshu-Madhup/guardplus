@@ -16,9 +16,12 @@ from groq import Groq
 from dotenv import load_dotenv, dotenv_values
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
 from fastapi_mail import ConnectionConfig, FastMail, MessageSchema, MessageType
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr
+import os
 
 load_dotenv(override=True)
 
@@ -37,18 +40,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── MongoDB client (created once at startup) ─────────────────────────────────
-mongo_client: AsyncIOMotorClient = None
-db = None
+FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
-@app.on_event("startup")
-async def startup():
+async def lifespan(app: FastAPI):
     global mongo_client, db
     mongo_client = AsyncIOMotorClient(MONGO_URI)
     db = mongo_client[DB_NAME]
 
-    # Pre-warm DeepFace model and build embeddings cache so the first
-    # verify request is not slow.
+    if FRONTEND_DIST.exists():
+        app.mount("/app", StaticFiles(directory=str(FRONTEND_DIST), html=True), name="frontend")
+
     image_files = [
         f for f in DATASET_DIR.iterdir()
         if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS
@@ -59,10 +60,26 @@ async def startup():
         except Exception as warmup_err:
             print(f"[Startup] Embeddings pre-warm failed (non-fatal): {warmup_err}")
 
-@app.on_event("shutdown")
-async def shutdown():
+    yield
+
     if mongo_client:
         mongo_client.close()
+
+
+@app.get("/")
+async def root():
+    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
+        return RedirectResponse(url="/app/", status_code=307)
+    return {"status": "GuardPlus API is running"}
+
+
+@app.get("/app")
+async def app_root():
+    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
+        return RedirectResponse(url="/app/", status_code=307)
+    raise HTTPException(status_code=404, detail="Frontend not built")
+
+app = FastAPI(lifespan=lifespan)
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class VisitorIn(BaseModel):
@@ -362,9 +379,9 @@ EMBEDDINGS_CACHE_FILE = DATASET_DIR / "guard_embeddings.pkl"
 # Cosine distance: same person ~0.0-0.45, different person >0.6
 # 0.50 is a safe balance — lenient enough for webcam vs reference photo,
 # strict enough to reject background/non-face images.
-VERIFY_MODEL     = "Facenet512"
-VERIFY_THRESHOLD = 0.60   # cosine distance; raised from 0.50 to handle cross-device captures
-VERIFY_DETECTOR  = "opencv"  # fast; use "retinaface" for better accuracy
+VERIFY_MODEL     = "ArcFace"       # better for similar faces; ArcFace is state-of-art for distinguishing identities
+VERIFY_THRESHOLD = 0.50           # stricter; ArcFace cosine distance ~0.45-0.50 for same person
+VERIFY_DETECTOR  = "retinaface"    # more accurate face detection, handles angles better than opencv
 
 
 def _sanitize_name(name: str) -> str:
