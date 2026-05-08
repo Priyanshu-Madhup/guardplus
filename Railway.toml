@@ -1,6 +1,5 @@
 [railway]
   entrypoint = "backend"
-  staticId = "placeholder"
 
 [build]
   command = "cd frontend && npm install && npm run build && cd ../backend && pip install -r requirements.txt"

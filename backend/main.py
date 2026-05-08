@@ -29,17 +29,6 @@ MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME   = "guardplus"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
-app = FastAPI(title="GuardPlus API", version="2.0.0")
-
-# Allow all origins so the phone on the local network can reach the backend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
 async def lifespan(app: FastAPI):
@@ -63,20 +52,16 @@ async def lifespan(app: FastAPI):
         mongo_client.close()
 
 
-@app.get("/")
-async def root():
-    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
-        return RedirectResponse(url="/app/", status_code=307)
-    return {"status": "GuardPlus API is running"}
+app = FastAPI(title="GuardPlus API", version="2.0.0", lifespan=lifespan)
 
-
-@app.get("/app")
-async def app_root():
-    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
-        return RedirectResponse(url="/app/", status_code=307)
-    raise HTTPException(status_code=404, detail="Frontend not built")
-
-app = FastAPI(lifespan=lifespan)
+# Allow all origins so the phone on the local network can reach the backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 class VisitorIn(BaseModel):
@@ -127,11 +112,19 @@ def get_mail_conf():
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
+    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
+        return RedirectResponse(url="/app/", status_code=307)
     return {
         "status": "GuardPlus API is running",
         "mail_user": os.getenv("MAIL_USERNAME", "NOT SET"),
         "mail_server": os.getenv("MAIL_SERVER", "NOT SET"),
     }
+
+@app.get("/app")
+async def app_redirect():
+    if FRONTEND_DIST.exists() and (FRONTEND_DIST / "index.html").exists():
+        return RedirectResponse(url="/app/", status_code=307)
+    raise HTTPException(status_code=404, detail="Frontend not built")
 
 # ── Visitor CRUD ──────────────────────────────────────────────────────────────
 @app.post("/api/visitors", status_code=201)
@@ -605,8 +598,6 @@ async def verify_guard(image: UploadFile = File(...)):
     Uses pre-computed cached embeddings so the DeepFace model is NOT
     retrained or re-run on every guard image on each request.
     """
-    from deepface import DeepFace  # lazy import — kept for backward compatibility only
-
     # Load cached guard embeddings (rebuilt only when dataset changes)
     embeddings = _load_embeddings_cache()
     if not embeddings:
