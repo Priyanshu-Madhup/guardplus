@@ -379,9 +379,9 @@ EMBEDDINGS_CACHE_FILE = DATASET_DIR / "guard_embeddings.pkl"
 # Cosine distance: same person ~0.0-0.45, different person >0.6
 # 0.50 is a safe balance — lenient enough for webcam vs reference photo,
 # strict enough to reject background/non-face images.
-VERIFY_MODEL     = "ArcFace"       # better for similar faces; ArcFace is state-of-art for distinguishing identities
-VERIFY_THRESHOLD = 0.50           # stricter; ArcFace cosine distance ~0.45-0.50 for same person
-VERIFY_DETECTOR  = "retinaface"    # more accurate face detection, handles angles better than opencv
+VERIFY_MODEL     = "arcface"
+VERIFY_THRESHOLD = 0.50
+VERIFY_DETECTOR  = "retinaface"
 
 
 def _sanitize_name(name: str) -> str:
@@ -501,10 +501,13 @@ def _cosine_distance(a: list, b: list) -> float:
 
 def _build_embeddings_cache() -> dict:
     """
-    Compute DeepFace embeddings for every registered guard image and persist
+    Compute ArcFace embeddings for every registered guard image and persist
     them to EMBEDDINGS_CACHE_FILE.  Returns the newly built cache dict.
     """
-    from deepface import DeepFace  # lazy import
+    from insightface.app import FaceAnalysis
+
+    app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+    app.prepare(ctx_id=-1, det_size=(640, 640))
 
     image_files = [
         f for f in DATASET_DIR.iterdir()
@@ -514,15 +517,17 @@ def _build_embeddings_cache() -> dict:
     cache: dict = {}
     for img_path in image_files:
         try:
-            results = DeepFace.represent(
-                img_path=str(img_path),
-                model_name=VERIFY_MODEL,
-                detector_backend=VERIFY_DETECTOR,
-                enforce_detection=False,
-            )
-            if results:
-                cache[img_path.name] = results[0]["embedding"]
+            import cv2
+            img = cv2.imread(str(img_path))
+            if img is None:
+                print(f"[Embeddings] Could not read {img_path.name}")
+                continue
+            faces = app.get(img)
+            if faces:
+                cache[img_path.name] = faces[0].normed_embedding.tolist()
                 print(f"[Embeddings] Cached {img_path.name}")
+            else:
+                print(f"[Embeddings] No face in {img_path.name}")
         except Exception as e:
             print(f"[Embeddings] Skipping {img_path.name}: {e}")
 
@@ -603,7 +608,7 @@ async def verify_guard(image: UploadFile = File(...)):
     Uses pre-computed cached embeddings so the DeepFace model is NOT
     retrained or re-run on every guard image on each request.
     """
-    from deepface import DeepFace  # lazy import — heavy library
+    from deepface import DeepFace  # lazy import — kept for backward compatibility only
 
     # Load cached guard embeddings (rebuilt only when dataset changes)
     embeddings = _load_embeddings_cache()
@@ -655,24 +660,24 @@ async def verify_guard(image: UploadFile = File(...)):
         except Exception as exif_err:
             print(f"[Guard Verify] EXIF fix skipped: {exif_err}")
         try:
-            probe_results = DeepFace.represent(
-                img_path=tmp_path,
-                model_name=VERIFY_MODEL,
-                detector_backend=VERIFY_DETECTOR,
-                enforce_detection=False,
-            )
+            import cv2
+            from insightface.app import FaceAnalysis
+            app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+            app.prepare(ctx_id=-1, det_size=(640, 640))
+            probe_img = cv2.imread(tmp_path)
+            faces = app.get(probe_img)
         except Exception as rep_err:
             err_str = str(rep_err)
             print(f"[Guard Verify] represent() failed: {err_str}")
             raise HTTPException(status_code=500, detail=err_str)
 
-        if not probe_results:
+        if not faces:
             raise HTTPException(
                 status_code=400,
                 detail="No face detected in the photo. Please take a clear, front-facing photo.",
             )
 
-        probe_embedding = probe_results[0]["embedding"]
+        probe_embedding = faces[0].normed_embedding.tolist()
 
         # Compare probe against every cached guard embedding
         best_distance = float("inf")
