@@ -31,6 +31,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
+# ── Dataset / face recognition paths (needed at lifespan) ────────────────────
+DATASET_DIR = Path(__file__).parent / "dataset"
+DATASET_DIR.mkdir(exist_ok=True)
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
 async def lifespan(app: FastAPI):
     global mongo_client, db
     mongo_client = AsyncIOMotorClient(MONGO_URI)
@@ -356,10 +361,7 @@ async def send_pass_email(req: EmailPassRequest):
 
 # ── Guard Face Recognition ────────────────────────────────────────────────────
 # Dataset folder lives at: backend/dataset/
-DATASET_DIR = Path(__file__).parent / "dataset"
-DATASET_DIR.mkdir(exist_ok=True)
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 # Persistent embeddings cache – rebuilt only when the dataset changes.
 EMBEDDINGS_CACHE_FILE = DATASET_DIR / "guard_embeddings.pkl"
